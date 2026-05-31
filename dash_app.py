@@ -92,6 +92,16 @@ layout1 = html.Div(
 
 layout2 = html.Div([
     html.H1("Utility Comparison"),
+    html.Label("Bet size sweep range:"),
+    dcc.RangeSlider(
+        id='fraction-range',
+        min=0,
+        max=1,
+        step=0.01,
+        value=[0.001, 0.5],
+        marks={i / 10: f'{i * 10}%' for i in range(11)},
+        tooltip={'placement': 'bottom', 'always_visible': True},
+    ),
     dcc.Loading(html.Div(id='output-plot')),
 ])
 
@@ -263,9 +273,10 @@ def create_ready_to_bar_df(
     Input('sequential-input', 'value'),
     Input('contemporaneous-input', 'value'),
     Input('bet-size-slider', 'value'),
-    Input('absorbing-state-input', 'value')
+    Input('absorbing-state-input', 'value'),
+    Input('fraction-range', 'value'),
 )
-def update_plot(probability, sequential, contemporaneous, betsize, absorbing_state):
+def update_plot(probability, sequential, contemporaneous, betsize, absorbing_state, fraction_range):
 
     def util_exp(val):
         return 1 - np.exp(-(val - 1) / 0.1)
@@ -281,7 +292,8 @@ def update_plot(probability, sequential, contemporaneous, betsize, absorbing_sta
     util_exp_dist = distributionalize(util_exp)
     util_log_dist = distributionalize(util_log)
 
-    fractions = np.linspace(0.001, 0.5, 100)
+    f_min, f_max = fraction_range or [0.001, 0.5]
+    fractions = np.linspace(max(f_min, 0.001), f_max, 100)
     utility_vector_exp = np.zeros(len(fractions))
     utility_vector_log = np.zeros(len(fractions))
     for it, cur_fraction in np.ndenumerate(fractions):
@@ -306,6 +318,13 @@ def update_plot(probability, sequential, contemporaneous, betsize, absorbing_sta
             yaxis=dict(title='Expected utility'),
             plot_bgcolor='rgba(0,0,0,0)',
         ),
+    )
+    fig.add_vline(
+        x=betsize / 100,
+        line_dash='dot',
+        line_color='grey',
+        annotation_text='current bet',
+        annotation_position='top right',
     )
     return dcc.Graph(figure=fig)
 
