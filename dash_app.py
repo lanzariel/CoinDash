@@ -112,6 +112,23 @@ layout2 = html.Div(
                 ),
             ],
         ),
+        html.Div(style=SECTION, children=[
+            html.Label(
+                "Risk aversion γ  (CRRA utility:  W^(1−γ)/(1−γ),  γ=1 → log = Kelly)",
+                style=LABEL,
+            ),
+            html.Div(
+                style={'overflow': 'visible', 'paddingBottom': '36px'},
+                children=[
+                    dcc.Slider(
+                        id='gamma-slider',
+                        min=0.1, max=5, step=0.1, value=2,
+                        marks={g: str(g) for g in [0.1, 0.5, 1, 2, 3, 4, 5]},
+                        tooltip={'placement': 'bottom', 'always_visible': True},
+                    ),
+                ],
+            ),
+        ]),
         dcc.Loading(html.Div(id='output-plot')),
     ],
 )
@@ -252,42 +269,47 @@ def update_barplot(probability, sequential, contemporaneous, betsize, absorbing_
     Input('bet-size-slider', 'value'),
     Input('absorbing-state-input', 'value'),
     Input('fraction-range', 'value'),
+    Input('gamma-slider', 'value'),
 )
-def update_plot(probability, sequential, contemporaneous, betsize, absorbing_state, fraction_range):
+def update_plot(probability, sequential, contemporaneous, betsize, absorbing_state, fraction_range, gamma):
 
-    def util_exp(val):
-        return 1 - np.exp(-(val - 1) / 0.1)
+    def util_crra(g):
+        """CRRA utility: W^(1-g)/(1-g) for g≠1, log(W) for g=1 (Kelly)."""
+        def u(val):
+            if val <= 0:
+                return -np.inf
+            if abs(g - 1.0) < 1e-9:
+                return np.log(val)
+            return val ** (1 - g) / (1 - g)
+        return u
 
-    def util_log(val):
-        return -np.inf if val <= 0 else np.log(val)
+    def expected_utility(util_fn, d):
+        return sum(prob * util_fn(wealth) for wealth, prob in d.items())
 
-    def distributionalize(old_util):
-        def new_util(d):
-            return sum(prob * old_util(wealth) for wealth, prob in d.items())
-        return new_util
-
-    util_exp_dist = distributionalize(util_exp)
-    util_log_dist = distributionalize(util_log)
+    gamma = gamma or 1.0
+    u_kelly = util_crra(1.0)
+    u_gamma = util_crra(gamma)
 
     f_min, f_max = fraction_range or [0.001, 0.19]
     fractions = np.linspace(max(f_min, 0.001), f_max, 100)
-    utility_vector_exp = np.zeros(len(fractions))
-    utility_vector_log = np.zeros(len(fractions))
-    for it, cur_fraction in np.ndenumerate(fractions):
-        cur_d = create_nonrecombining_distribution(
-            ncs=contemporaneous,
-            nsl=sequential,
-            p=probability,
-            s=cur_fraction,
-            absorbing=absorbing_state,
+    eu_kelly = np.zeros(len(fractions))
+    eu_gamma = np.zeros(len(fractions))
+    for it, s in np.ndenumerate(fractions):
+        d = create_nonrecombining_distribution(
+            ncs=contemporaneous, nsl=sequential,
+            p=probability, s=s, absorbing=absorbing_state,
         )
-        utility_vector_exp[it] = util_exp_dist(cur_d)
-        utility_vector_log[it] = util_log_dist(cur_d)
+        eu_kelly[it] = expected_utility(u_kelly, d)
+        eu_gamma[it] = expected_utility(u_gamma, d)
+
+    kelly_label = 'Log utility — Kelly (CRRA γ=1)'
+    gamma_label = f'CRRA γ={gamma:.1f}' + (' = Kelly' if abs(gamma - 1.0) < 0.05 else '')
 
     fig = go.Figure(
         data=[
-            go.Scatter(x=fractions, y=utility_vector_exp, mode='lines', name='Exponential utility'),
-            go.Scatter(x=fractions, y=utility_vector_log, mode='lines', name='Log utility (Kelly)'),
+            go.Scatter(x=fractions, y=eu_kelly, mode='lines', name=kelly_label),
+            go.Scatter(x=fractions, y=eu_gamma, mode='lines', name=gamma_label,
+                       line=dict(dash='dash')),
         ],
         layout=go.Layout(
             xaxis=dict(title='Bet size (fraction of wealth)', tickformat='.0%'),
@@ -299,12 +321,10 @@ def update_plot(probability, sequential, contemporaneous, betsize, absorbing_sta
     )
     fig.add_vline(
         x=betsize / 100,
-        line_dash='dot',
-        line_color='grey',
-        annotation_text='current bet size',
-        annotation_position='top right',
+        line_dash='dot', line_color='grey',
+        annotation_text='current bet size', annotation_position='top right',
     )
-    return dcc.Graph(figure=fig, style={'height': '65vh'}, config={'displayModeBar': False})
+    return dcc.Graph(figure=fig, style={'height': '55vh'}, config={'displayModeBar': False})
 
 
 # ── Pure computation ─────────────────────────────────────────────────────────
