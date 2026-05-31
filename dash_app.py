@@ -290,10 +290,15 @@ def update_plot(probability, sequential, contemporaneous, betsize, absorbing_sta
     u_kelly = util_crra(1.0)
     u_gamma = util_crra(gamma)
 
+    def util_cara(val):
+        # CARA α=10: optimal bet is a fixed dollar amount, not fraction (see note)
+        return 1 - np.exp(-(val - 1) / 0.1)
+
     f_min, f_max = fraction_range or [0.001, 0.19]
     fractions = np.linspace(max(f_min, 0.001), f_max, 100)
     eu_kelly = np.zeros(len(fractions))
     eu_gamma = np.zeros(len(fractions))
+    eu_cara  = np.zeros(len(fractions))
     for it, s in np.ndenumerate(fractions):
         d = create_nonrecombining_distribution(
             ncs=contemporaneous, nsl=sequential,
@@ -301,22 +306,31 @@ def update_plot(probability, sequential, contemporaneous, betsize, absorbing_sta
         )
         eu_kelly[it] = expected_utility(u_kelly, d)
         eu_gamma[it] = expected_utility(u_gamma, d)
+        eu_cara[it]  = expected_utility(util_cara, d)
 
-    kelly_label = 'Log utility — Kelly (CRRA γ=1)'
-    gamma_label = f'CRRA γ={gamma:.1f}' + (' = Kelly' if abs(gamma - 1.0) < 0.05 else '')
+    kelly_label = 'Log / Kelly (CRRA γ=1)  [left axis]'
+    gamma_label = (f'CRRA γ={gamma:.1f}' + (' = Kelly' if abs(gamma - 1.0) < 0.05 else '')) + '  [left axis]'
+    cara_label  = 'Exponential / CARA α=10  [right axis]'
 
     fig = go.Figure(
         data=[
             go.Scatter(x=fractions, y=eu_kelly, mode='lines', name=kelly_label),
             go.Scatter(x=fractions, y=eu_gamma, mode='lines', name=gamma_label,
                        line=dict(dash='dash')),
+            go.Scatter(x=fractions, y=eu_cara, mode='lines', name=cara_label,
+                       yaxis='y2', line=dict(dash='dot')),
         ],
         layout=go.Layout(
             xaxis=dict(title='Bet size (fraction of wealth)', tickformat='.0%'),
-            yaxis=dict(title='Expected utility'),
+            yaxis=dict(title='Expected utility (CRRA)', side='left'),
+            yaxis2=dict(
+                title='Expected utility (CARA)',
+                overlaying='y', side='right',
+                showgrid=False,
+            ),
             plot_bgcolor='rgba(0,0,0,0)',
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-            margin=dict(l=50, r=10, t=40, b=50),
+            margin=dict(l=50, r=60, t=40, b=50),
         ),
     )
     fig.add_vline(
