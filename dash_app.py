@@ -7,9 +7,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import binom
 
-import time
 from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor
 
 
 app = dash.Dash(__name__)
@@ -50,9 +48,11 @@ layout1 = html.Div(
         html.Div(
             style={'display': 'flex', 'flex-direction': 'row', 'justify-content': 'center'},
             children=[
-                dcc.Graph(
-                    id='barplot',
-                    style={ 'height': '35vh','width': '80%'},
+                dcc.Loading(
+                    dcc.Graph(
+                        id='barplot',
+                        style={'height': '35vh', 'width': '80%'},
+                    ),
                 ),
             ]
         ),
@@ -90,37 +90,9 @@ layout1 = html.Div(
     ],
 )
 
-layout2 = app.layout = html.Div([
-    html.H1("Set Parameters"),
-    html.Div([
-        html.Div([
-            html.Label("x_min:"),
-            dcc.Input(id='x-min', type='number', value=0.001),
-        ], style={'display': 'flex', 'flex-direction': 'column', 'align-items': 'center'}),
-        html.Div([
-            html.Label("x_max:"),
-            dcc.Input(id='x-max', type='number', value=0.1),
-        ], style={'display': 'flex', 'flex-direction': 'column', 'align-items': 'center'}),
-        html.Div([
-            html.Label("y_min:"),
-            dcc.Input(id='y-min', type='number', value=0),
-        ], style={'display': 'flex', 'flex-direction': 'column', 'align-items': 'center'}),
-        html.Div([
-            html.Label("y_max:"),
-            dcc.Input(id='y-max', type='number', value=1),
-        ], style={'display': 'flex', 'flex-direction': 'column', 'align-items': 'center'}),
-    ], style={'display': 'flex', 'flex-direction': 'row'}),
-    html.Div([
-        html.Div([
-            html.Label("Exponential Factor:"),
-            dcc.Input(id='exp-factor', type='number', value=1),
-        ], style={'display': 'flex', 'flex-direction': 'column', 'align-items': 'center'}),
-        html.Div([
-            html.Label("Fractional Kelly Factor:"),
-            dcc.Input(id='fractional-kelly-factor', type='number', value=1),
-        ], style={'display': 'flex', 'flex-direction': 'column', 'align-items': 'center'}),
-    ], style={'display': 'flex', 'flex-direction': 'row'}),
-    html.Div(id='output-plot')
+layout2 = html.Div([
+    html.H1("Utility Comparison"),
+    dcc.Loading(html.Div(id='output-plot')),
 ])
 
 
@@ -241,36 +213,21 @@ def update_barplot(probability,
 
 @lru_cache(maxsize=600)
 def create_nonrecombining_distribution(p=0.55, ncs=10, nsl=3, s=0.09, absorbing=0.0):
-    def compute_distribution():
-        rv = binom(ncs,p)
-        distribution = {1: 1}
-
-        for _ in range(nsl):
-            next_distribution = {}
-            for cur_el, cur_prob in distribution.items():
-                for cur_x in range(ncs+1):
-                    trans_prob = rv.pmf(cur_x)
-                    if absorbing is not None and cur_el*(1-s*ncs)<absorbing:
-                        next_el = cur_el
-                    else:
-                        next_el = cur_el * (1+s*(cur_x*2-ncs))
-                    next_prob = trans_prob * cur_prob
-                    next_distribution[next_el] = next_distribution.get(next_el, 0) + next_prob
-            distribution = next_distribution
-        # print(distribution)
-        return distribution
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(compute_distribution)
-        try:
-            result = future.result(timeout=0.01)  # Set timeout of 0.2 seconds
-        except TimeoutError:
-            print("timeout")
-            result = {}
-        except Exception as e:
-            print("An exception occurred:", str(e))
-            result = {}
-    return result
+    rv = binom(ncs, p)
+    distribution = {1: 1}
+    for _ in range(nsl):
+        next_distribution = {}
+        for cur_el, cur_prob in distribution.items():
+            for cur_x in range(ncs + 1):
+                trans_prob = rv.pmf(cur_x)
+                if absorbing is not None and cur_el * (1 - s * ncs) < absorbing:
+                    next_el = cur_el
+                else:
+                    next_el = cur_el * (1 + s * (cur_x * 2 - ncs))
+                next_prob = trans_prob * cur_prob
+                next_distribution[next_el] = next_distribution.get(next_el, 0) + next_prob
+        distribution = next_distribution
+    return distribution
 
 def create_ready_to_bar_df(
         p=0.55,
@@ -302,69 +259,54 @@ def create_ready_to_bar_df(
 
 @app.callback(
     Output('output-plot', 'children'),
-    Input('x-min', 'value'),
-    Input('x-max', 'value'),
-    Input('y-min', 'value'),
-    Input('y-max', 'value'),
-    Input('exp-factor', 'value'),
-    Input('fractional-kelly-factor', 'value'),
     Input('probability-slider', 'value'),
     Input('sequential-input', 'value'),
     Input('contemporaneous-input', 'value'),
     Input('bet-size-slider', 'value'),
     Input('absorbing-state-input', 'value')
 )
-def update_plot(x_min, x_max, y_min, y_max, exp_factor, fractional_kelly_factor, probability, sequential, contemporaneous, betsize, absorbing_state):
-
+def update_plot(probability, sequential, contemporaneous, betsize, absorbing_state):
 
     def util_exp(val):
-        return 1-np.exp(-(val-1)/0.1)
+        return 1 - np.exp(-(val - 1) / 0.1)
+
     def util_log(val):
-        if val <=0:
-            return -np.inf #1e10
-        else:
-            return np.log(val)
-        
+        return -np.inf if val <= 0 else np.log(val)
+
     def distributionalize(old_util):
         def new_util(d):
-            expectation = 0
-            for it, el in d.items():
-                expectation += el*old_util(it)
-            return expectation
+            return sum(el * old_util(it) for it, el in d.items())
         return new_util
 
     util_exp_dist = distributionalize(util_exp)
     util_log_dist = distributionalize(util_log)
 
-    fractions = np.linspace(x_min,x_max,60)
+    fractions = np.linspace(0.001, 0.5, 100)
     utility_vector_exp = np.zeros(len(fractions))
     utility_vector_log = np.zeros(len(fractions))
     for it, cur_fraction in np.ndenumerate(fractions):
         cur_d = create_nonrecombining_distribution(
-            ncs = contemporaneous,
-            nsl = sequential,
+            ncs=contemporaneous,
+            nsl=sequential,
             p=probability,
             s=cur_fraction,
-            absorbing = absorbing_state
+            absorbing=absorbing_state,
         )
         utility_vector_exp[it] = util_exp_dist(cur_d)
         utility_vector_log[it] = util_log_dist(cur_d)
-    # print("frac", fractions)
-    # print("utility", utility_vector_exp)
-    # print(absorbing_state)
-    # Use the inputs to create the plot
-    trace_exp = go.Scatter(x=fractions, y=utility_vector_exp , mode='lines', name='exponential')
+
+    trace_exp = go.Scatter(x=fractions, y=utility_vector_exp, mode='lines', name='exponential')
     trace_log = go.Scatter(x=fractions, y=utility_vector_log, mode='lines', name='kelly')
 
-    layout = go.Layout(
-        title='Utility Comparison',
-        xaxis=dict(title='Fractions', range=[x_min, x_max]),
-        yaxis=dict(title='Utility', range=[y_min, y_max]),
+    fig = go.Figure(
+        data=[trace_exp, trace_log],
+        layout=go.Layout(
+            title='Utility vs Bet Size',
+            xaxis=dict(title='Bet size (fraction of wealth)', tickformat='.0%'),
+            yaxis=dict(title='Expected utility'),
+            plot_bgcolor='rgba(0,0,0,0)',
+        ),
     )
-
-    data = [trace_exp, trace_log]
-
-    fig = go.Figure(data=data, layout=layout)
     return dcc.Graph(figure=fig)
 
 
