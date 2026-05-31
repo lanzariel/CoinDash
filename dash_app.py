@@ -369,4 +369,4 @@ def update_plot(x_min, x_max, y_min, y_max, exp_factor, fractional_kelly_factor,
 
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run(debug=True)
